@@ -36,6 +36,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Literal, Protocol, runtime_checkable
 
+import psutil
 from pydantic import BaseModel
 
 from .train import TrainingRequest
@@ -122,12 +123,14 @@ class MetricsHistoryPoint(BaseModel):
 
 
 def _pid_alive(pid: int) -> bool:
-    """Return True if a process with this PID exists. Cheap; uses signal 0."""
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
+    """Return whether a positive PID exists without crashing on OS probe errors."""
+    if pid <= 0:
         return False
-    return True
+    try:
+        return psutil.pid_exists(pid)
+    except (OSError, ValueError, psutil.Error):
+        logger.debug("Could not probe process PID %d", pid, exc_info=True)
+        return False
 
 
 @runtime_checkable

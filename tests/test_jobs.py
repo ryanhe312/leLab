@@ -91,9 +91,25 @@ def test_log_line_round_trips_to_json() -> None:
 def test_pid_alive_returns_false_for_unlikely_pid() -> None:
     from lelab.jobs import _pid_alive
 
-    # DISCOVERED: os.kill(-1, 0) on macOS sends to process group and succeeds
-    # (returns True), so we use a large PID that certainly does not exist.
     assert _pid_alive(999999999) is False
+
+
+def test_pid_alive_rejects_non_positive_pid() -> None:
+    from lelab.jobs import _pid_alive
+
+    assert _pid_alive(0) is False
+    assert _pid_alive(-1) is False
+
+
+def test_pid_alive_handles_os_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import lelab.jobs as jobs
+
+    def raise_probe_error(_pid: int) -> bool:
+        raise OSError("simulated Windows process-query failure")
+
+    monkeypatch.setattr(jobs.psutil, "pid_exists", raise_probe_error)
+
+    assert jobs._pid_alive(1234) is False
 
 
 def test_hub_checkpoints_from_files_parses_tree() -> None:
