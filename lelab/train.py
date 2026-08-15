@@ -20,7 +20,8 @@ lives in app/jobs.py.
 
 import json
 import re
-from typing import TYPE_CHECKING
+import sys
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
@@ -37,6 +38,7 @@ class TrainingRequest(BaseModel):
     dataset_root: str | None = None
     dataset_episodes: list[int] | None = None
     dataset_image_transforms_enable: bool = False
+    dataset_video_backend: Literal["pyav", "torchcodec"] | None = None
 
     # Policy configuration
     policy_type: str = "act"
@@ -122,6 +124,7 @@ def build_training_command(
     that lacks lerobot.
     """
     cmd: list[str] = [python_executable, "-m", "lerobot.scripts.lerobot_train"]
+    is_cloud = job_target is not None and job_target.runner == "hf_cloud"
 
     # Dataset
     cmd.extend(["--dataset.repo_id", request.dataset_repo_id])
@@ -133,6 +136,17 @@ def build_training_command(
         cmd.extend(["--dataset.episodes"] + [str(ep) for ep in request.dataset_episodes])
     if request.dataset_image_transforms_enable:
         cmd.extend(["--dataset.image_transforms.enable", "true"])
+    # TorchCodec's Windows wheels require a supported shared FFmpeg build and
+    # discoverability of its DLL directory.  Merely having torchcodec installed
+    # makes LeRobot select it, even when those native dependencies cannot load.
+    # PyAV ships working decoder libraries with its wheel, so prefer it for local
+    # Windows jobs unless the caller explicitly opts into TorchCodec.  Do not bake
+    # the host's fallback into cloud jobs, whose runtime has its own dependencies.
+    video_backend = request.dataset_video_backend
+    if video_backend is None and sys.platform == "win32" and not is_cloud:
+        video_backend = "pyav"
+    if video_backend is not None:
+        cmd.extend(["--dataset.video_backend", video_backend])
 
     # Policy
     cmd.extend(["--policy.type", request.policy_type])
@@ -152,7 +166,6 @@ def build_training_command(
     # the pod itself; _pod_forwarded_args drops any --policy.push_to_hub/--policy.repo_id
     # we'd pass, so we must not emit them. Local runs keep the existing behavior:
     # LeRobot defaults push_to_hub=True and demands --policy.repo_id when so.
-    is_cloud = job_target is not None and job_target.runner == "hf_cloud"
     if not is_cloud:
         cmd.extend(["--policy.push_to_hub", "true" if request.policy_push_to_hub else "false"])
         if request.policy_push_to_hub and request.policy_repo_id:

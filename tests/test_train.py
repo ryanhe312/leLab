@@ -60,6 +60,37 @@ def test_optional_dataset_fields_only_present_when_set() -> None:
     assert cmd2[idx + 1 : idx + 4] == ["0", "1", "2"]
 
 
+def test_local_windows_training_defaults_to_pyav(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lelab import train
+
+    monkeypatch.setattr(train.sys, "platform", "win32")
+    req = train.TrainingRequest(dataset_repo_id="lerobot/pusht")
+
+    cmd = train.build_training_command(req, "/tmp/out")
+
+    assert _arg_value(cmd, "--dataset.video_backend") == "pyav"
+
+
+def test_video_backend_can_be_overridden_and_is_not_forced_on_cloud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lelab import train
+    from lelab.jobs import JobTarget
+
+    monkeypatch.setattr(train.sys, "platform", "win32")
+    explicit = train.TrainingRequest(dataset_repo_id="x", dataset_video_backend="torchcodec")
+    local_cmd = train.build_training_command(explicit, "/tmp/out")
+    assert _arg_value(local_cmd, "--dataset.video_backend") == "torchcodec"
+
+    default = train.TrainingRequest(dataset_repo_id="x")
+    cloud_cmd = train.build_training_command(
+        default,
+        "/tmp/out",
+        job_target=JobTarget(runner="hf_cloud", flavor="a10g-small"),
+    )
+    assert "--dataset.video_backend" not in cloud_cmd
+
+
 def test_wandb_block_only_serialized_when_enabled() -> None:
     from lelab.train import TrainingRequest, build_training_command
 
