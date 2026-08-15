@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -17,12 +17,15 @@ import { useDatasets } from "@/hooks/useDatasets";
 import { DatasetItem } from "@/lib/replayApi";
 import { CameraConfig } from "@/components/recording/CameraConfiguration";
 import { isHostedSpace } from "@/lib/isHostedSpace";
+import { useApi } from "@/contexts/ApiContext";
 
 const ON_SPACE = isHostedSpace();
 
 const Landing = () => {
+  const location = useLocation();
   const [showUsageModal, setShowUsageModal] = useState(ON_SPACE);
   const { auth } = useHfAuth();
+  const { baseUrl, fetchWithHeaders } = useApi();
 
   const {
     selectedName,
@@ -38,6 +41,7 @@ const Landing = () => {
 
   // Recording modal state
   const [showRecordingModal, setShowRecordingModal] = useState(false);
+  const [resumeDatasetRepoId, setResumeDatasetRepoId] = useState<string | null>(null);
   const [datasetName, setDatasetName] = useState("");
   const [singleTask, setSingleTask] = useState("");
   const [numEpisodes, setNumEpisodes] = useState(5);
@@ -47,6 +51,8 @@ const Landing = () => {
   const [cameras, setCameras] = useState<CameraConfig[]>([]);
 
   const releaseStreamsRef = useRef<(() => void) | null>(null);
+  const resumeRequestRef = useRef(0);
+  const autoResumeHandledRef = useRef(false);
 
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -73,10 +79,10 @@ const Landing = () => {
     };
   }, []);
 
-  const openRecordingModal = () => {
+  const openRecordingModal = useCallback(() => {
     setCameras(selectedRecord ? [...(selectedRecord.cameras ?? [])] : []);
     setShowRecordingModal(true);
-  };
+  }, [selectedRecord]);
 
   const handleRecordingModalClose = (open: boolean) => {
     setShowRecordingModal(open);
@@ -118,9 +124,59 @@ const Landing = () => {
   };
 
   const handleCreateDataset = (name: string) => {
+    resumeRequestRef.current += 1;
+    setResumeDatasetRepoId(null);
     setDatasetName(name);
     openRecordingModal();
   };
+
+  const handleResumeDataset = useCallback(
+    async (item: DatasetItem) => {
+      const requestId = resumeRequestRef.current + 1;
+      resumeRequestRef.current = requestId;
+      setResumeDatasetRepoId(item.repo_id);
+      setDatasetName("");
+      setSingleTask("");
+      openRecordingModal();
+
+      // Preserve the existing task by default. The field remains editable so a
+      // resumed dataset can intentionally collect another supported task.
+      try {
+        const response = await fetchWithHeaders(`${baseUrl}/dataset-info`, {
+          method: "POST",
+          body: JSON.stringify({ dataset_repo_id: item.repo_id }),
+        });
+        const info = await response.json();
+        if (
+          resumeRequestRef.current === requestId &&
+          response.ok &&
+          info.success &&
+          info.single_task
+        ) {
+          setSingleTask(info.single_task);
+        }
+      } catch (error) {
+        console.warn("Could not load the existing dataset task:", error);
+      }
+    },
+    [baseUrl, fetchWithHeaders, openRecordingModal],
+  );
+
+  // Dataset Summary can send a dataset back to the Landing page. Wait for the
+  // persisted robot selection to load, then open the same continuation modal
+  // used by the dataset picker.
+  useEffect(() => {
+    const resumeDataset = (
+      location.state as { resumeDataset?: DatasetItem } | null
+    )?.resumeDataset;
+    if (!resumeDataset || isLoadingRobots || autoResumeHandledRef.current) {
+      return;
+    }
+
+    autoResumeHandledRef.current = true;
+    void handleResumeDataset(resumeDataset);
+    navigate("/", { replace: true, state: null });
+  }, [handleResumeDataset, isLoadingRobots, location.state, navigate]);
 
   const handleStartRecording = async () => {
     if (!selectedRecord) {
@@ -140,7 +196,7 @@ const Landing = () => {
       });
       return;
     }
-    if (!datasetName || !singleTask) {
+    if ((!resumeDatasetRepoId && !datasetName) || !singleTask) {
       toast({
         title: "Missing dataset details",
         description: "Please enter a dataset name and task description.",
@@ -149,10 +205,11 @@ const Landing = () => {
       return;
     }
 
-    const datasetRepoId =
+    const datasetRepoId = resumeDatasetRepoId ?? (
       auth.status === "authenticated"
         ? `${auth.username}/${datasetName}`
-        : datasetName;
+        : datasetName
+    );
 
     if (cameras.length > 0 && releaseStreamsRef.current) {
       console.log("🔓 Releasing camera streams before starting recording...");
@@ -210,7 +267,7 @@ const Landing = () => {
       fps: 30,
       video: true,
       push_to_hub: false,
-      resume: false,
+      resume: resumeDatasetRepoId !== null,
       streaming_encoding: streamingEncoding,
       cameras: cameraDict,
     };
@@ -249,6 +306,7 @@ const Landing = () => {
                 datasets={datasets}
                 loading={datasetsLoading}
                 onPickExisting={handlePickExisting}
+                onResumeExisting={handleResumeDataset}
                 onOpenCustom={handleOpenCustom}
                 onCreateNew={handleCreateDataset}
               >
@@ -297,6 +355,7 @@ const Landing = () => {
         open={showRecordingModal}
         onOpenChange={handleRecordingModalClose}
         robot={selectedRecord}
+        resumeDatasetRepoId={resumeDatasetRepoId}
         datasetName={datasetName}
         setDatasetName={setDatasetName}
         singleTask={singleTask}

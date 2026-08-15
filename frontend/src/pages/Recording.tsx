@@ -297,7 +297,7 @@ const Recording = () => {
 
       const data = await response.json();
 
-      if (response.ok) {
+      if (response.ok && data.success) {
         setRecordingSessionStarted(true);
         toast({
           title: "Recording Started",

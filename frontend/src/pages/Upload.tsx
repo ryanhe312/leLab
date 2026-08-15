@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Loader2,
   Trash2,
+  CirclePlus,
 } from "lucide-react";
 import { useApi } from "@/contexts/ApiContext";
 import { DatasetSource } from "@/lib/replayApi";
@@ -225,6 +226,20 @@ const Upload = () => {
     navigate("/");
   };
 
+  const handleContinueRecording = () => {
+    if (!datasetInfo) return;
+    navigate("/", {
+      state: {
+        resumeDataset: {
+          repo_id: datasetInfo.dataset_repo_id,
+          source: datasetInfo.source ?? "local",
+          private: false,
+          last_modified: null,
+        },
+      },
+    });
+  };
+
   const handleDeleteDataset = async () => {
     if (!datasetInfo) return;
     setIsDeleting(true);
@@ -359,9 +374,19 @@ const Upload = () => {
           <>
             {/* Dataset Summary */}
             <div className="bg-gray-900 rounded-lg p-6 border border-gray-700 mb-8">
-              <h2 className="text-xl font-semibold text-white mb-4">
-                Dataset Summary
-              </h2>
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h2 className="text-xl font-semibold text-white">
+                  Dataset Summary
+                </h2>
+                <Button
+                  type="button"
+                  onClick={handleContinueRecording}
+                  className="bg-red-500 text-white hover:bg-red-600"
+                >
+                  <CirclePlus className="mr-2 h-4 w-4" />
+                  Continue Recording
+                </Button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
                   <div>

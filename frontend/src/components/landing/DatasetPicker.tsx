@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, ExternalLink } from "lucide-react";
+import { Plus, ExternalLink, CirclePlus } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -19,18 +19,20 @@ interface DatasetPickerProps {
   datasets: DatasetItem[];
   loading: boolean;
   onPickExisting: (item: DatasetItem) => void;
+  onResumeExisting: (item: DatasetItem) => void;
   onCreateNew: (name: string) => void;
   onOpenCustom: (repoId: string) => void;
   children: React.ReactNode;
 }
 
-const REPO_ID_RE = /^[\w.\-]+\/[\w.\-]+$/;
+const REPO_ID_RE = /^[\w.-]+\/[\w.-]+$/;
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 const DatasetPicker: React.FC<DatasetPickerProps> = ({
   datasets,
   loading,
   onPickExisting,
+  onResumeExisting,
   onCreateNew,
   onOpenCustom,
   children,
@@ -75,6 +77,11 @@ const DatasetPicker: React.FC<DatasetPickerProps> = ({
     reset();
   };
 
+  const handleResume = (item: DatasetItem) => {
+    onResumeExisting(item);
+    reset();
+  };
+
   const handleCreate = () => {
     if (!canCreate) return;
     onCreateNew(trimmed);
@@ -100,6 +107,23 @@ const DatasetPicker: React.FC<DatasetPickerProps> = ({
       )}
       {d.private && (
         <span className="text-xs text-amber-400">private</span>
+      )}
+      {(d.source === "local" || d.source === "both") && (
+        <button
+          type="button"
+          title={`Continue collecting ${d.repo_id}`}
+          aria-label={`Continue collecting ${d.repo_id}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleResume(d);
+          }}
+          className="ml-2 inline-flex shrink-0 items-center gap-1 rounded border border-red-500/60 px-2 py-1 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200"
+        >
+          <CirclePlus className="h-3.5 w-3.5" />
+          Continue
+        </button>
       )}
     </CommandItem>
   );

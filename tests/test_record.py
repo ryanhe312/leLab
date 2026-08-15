@@ -119,3 +119,104 @@ def test_build_camera_configs_skips_non_opencv_type() -> None:
     configs = _build_camera_configs(cameras, Cv2Backends.ANY)
 
     assert configs == {}
+
+
+def test_create_record_config_sets_explicit_local_root_when_resuming(
+    tmp_lerobot_home, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import lelab.record as record
+    import lerobot.utils.constants as constants
+
+    monkeypatch.setattr(constants, "HF_LEROBOT_HOME", tmp_lerobot_home)
+    monkeypatch.setattr(record, "setup_calibration_files", lambda leader, follower: ("leader", "follower"))
+
+    request = record.RecordingRequest(
+        leader_port="COM_LEADER",
+        follower_port="COM_FOLLOWER",
+        leader_config="leader",
+        follower_config="follower",
+        dataset_repo_id="user/existing_dataset",
+        single_task="pick up the cube",
+        resume=True,
+    )
+
+    config = record.create_record_config(request)
+
+    assert config.resume is True
+    assert config.dataset.root == tmp_lerobot_home / "user" / "existing_dataset"
+
+
+def test_local_dataset_root_rejects_path_traversal(tmp_lerobot_home, monkeypatch: pytest.MonkeyPatch) -> None:
+    import lelab.record as record
+    import lerobot.utils.constants as constants
+
+    monkeypatch.setattr(constants, "HF_LEROBOT_HOME", tmp_lerobot_home)
+
+    with pytest.raises(ValueError, match="Invalid dataset id"):
+        record._local_dataset_root("../outside")
+
+
+def test_resume_requires_an_existing_local_dataset(tmp_lerobot_home, monkeypatch: pytest.MonkeyPatch) -> None:
+    import lelab.record as record
+    import lerobot.utils.constants as constants
+    from lelab import rollout, teleoperate
+
+    monkeypatch.setattr(constants, "HF_LEROBOT_HOME", tmp_lerobot_home)
+    monkeypatch.setattr(record, "recording_active", False)
+    monkeypatch.setattr(teleoperate, "teleoperation_active", False)
+    monkeypatch.setattr(rollout, "inference_active", False)
+
+    request = record.RecordingRequest(
+        leader_port="COM_LEADER",
+        follower_port="COM_FOLLOWER",
+        leader_config="leader",
+        follower_config="follower",
+        dataset_repo_id="user/missing",
+        single_task="pick up the cube",
+        resume=True,
+    )
+
+    result = record.handle_start_recording(request)
+
+    assert result["success"] is False
+    assert "not available locally" in result["message"]
+    assert record.recording_active is False
+
+
+def test_existing_dataset_can_append_an_episode(tmp_lerobot_home) -> None:
+    import numpy as np
+
+    from lerobot.datasets import LeRobotDataset
+
+    repo_id = "user/resumable"
+    root = tmp_lerobot_home / "user" / "resumable"
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (1,), "names": None},
+        "action": {"dtype": "float32", "shape": (1,), "names": None},
+    }
+
+    dataset = LeRobotDataset.create(repo_id, fps=30, root=root, features=features, use_videos=False)
+    dataset.add_frame(
+        {
+            "observation.state": np.array([0], dtype=np.float32),
+            "action": np.array([0], dtype=np.float32),
+            "task": "pick up the cube",
+        }
+    )
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id, root=root)
+    resumed.add_frame(
+        {
+            "observation.state": np.array([1], dtype=np.float32),
+            "action": np.array([1], dtype=np.float32),
+            "task": "pick up the cube",
+        }
+    )
+    resumed.save_episode()
+    resumed.finalize()
+
+    reopened = LeRobotDataset(repo_id, root=root)
+    assert reopened.num_episodes == 2
+    assert reopened.num_frames == 2

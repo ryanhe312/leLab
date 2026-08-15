@@ -28,6 +28,7 @@ interface RecordingModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   robot: RobotRecord | null;
+  resumeDatasetRepoId: string | null;
   datasetName: string;
   setDatasetName: (value: string) => void;
   singleTask: string;
@@ -50,6 +51,7 @@ const RecordingModal: React.FC<RecordingModalProps> = ({
   open,
   onOpenChange,
   robot,
+  resumeDatasetRepoId,
   datasetName,
   setDatasetName,
   singleTask,
@@ -81,12 +83,14 @@ const RecordingModal: React.FC<RecordingModalProps> = ({
             </div>
           </div>
           <DialogTitle className="text-white text-center text-2xl font-bold">
-            Configure Recording
+            {resumeDatasetRepoId ? "Continue Dataset Collection" : "Configure Recording"}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-6 py-4">
           <DialogDescription className="text-gray-400 text-base leading-relaxed text-center">
-            Pick a configured robot and dataset parameters for recording.
+            {resumeDatasetRepoId
+              ? "Append new episodes to the existing local dataset."
+              : "Pick a configured robot and dataset parameters for recording."}
           </DialogDescription>
 
           <div className="grid grid-cols-1 gap-6">
@@ -130,25 +134,33 @@ const RecordingModal: React.FC<RecordingModalProps> = ({
                     htmlFor="datasetName"
                     className="text-sm font-medium text-gray-300"
                   >
-                    Dataset Name *
+                    {resumeDatasetRepoId ? "Existing Dataset" : "Dataset Name *"}
                   </Label>
                   <Input
                     id="datasetName"
-                    value={datasetName}
+                    value={resumeDatasetRepoId ?? datasetName}
+                    readOnly={resumeDatasetRepoId !== null}
                     onChange={(e) =>
                       setDatasetName(
                         e.target.value.replace(/[^A-Za-z0-9._-]/g, "_")
                       )
                     }
                     placeholder="my_dataset"
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className="bg-gray-800 border-gray-700 text-white read-only:text-gray-400 read-only:cursor-not-allowed"
                   />
-                  <p className="text-xs text-gray-500">
-                    Letters, numbers, <code>.</code> <code>_</code>{" "}
-                    <code>-</code> only — other characters become{" "}
-                    <code>_</code>.
-                  </p>
-                  {datasetName &&
+                  {resumeDatasetRepoId ? (
+                    <p className="text-xs text-amber-300/80">
+                      Existing episodes are preserved; the number below is how
+                      many additional episodes to collect.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      Letters, numbers, <code>.</code> <code>_</code>{" "}
+                      <code>-</code> only — other characters become{" "}
+                      <code>_</code>.
+                    </p>
+                  )}
+                  {!resumeDatasetRepoId && datasetName &&
                     (auth.status === "authenticated" ? (
                       <p className="text-xs text-gray-500">
                         Will be saved as{" "}
@@ -182,7 +194,7 @@ const RecordingModal: React.FC<RecordingModalProps> = ({
                     htmlFor="numEpisodes"
                     className="text-sm font-medium text-gray-300"
                   >
-                    Number of Episodes
+                    {resumeDatasetRepoId ? "Additional Episodes" : "Number of Episodes"}
                   </Label>
                   <NumberInput
                     id="numEpisodes"
@@ -286,7 +298,7 @@ const RecordingModal: React.FC<RecordingModalProps> = ({
               disabled={!canStart}
               className="w-full sm:w-auto bg-red-500 hover:bg-red-600 text-white px-10 py-6 text-lg transition-all shadow-md shadow-red-500/30 hover:shadow-lg hover:shadow-red-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Start Recording
+              {resumeDatasetRepoId ? "Continue Recording" : "Start Recording"}
             </Button>
             <Button
               onClick={() => onOpenChange(false)}

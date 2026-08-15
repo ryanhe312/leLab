@@ -19,6 +19,7 @@ import threading
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -89,6 +90,22 @@ class UploadRequest(BaseModel):
 
 class DatasetInfoRequest(BaseModel):
     dataset_repo_id: str
+
+
+def _local_dataset_root(repo_id: str) -> Path:
+    """Resolve a dataset id inside LeRobot's local cache.
+
+    Resuming writes to the existing dataset, so unlike read-only loading it
+    must use an explicit root.  Keep request-provided ids from escaping the
+    cache while resolving that path.
+    """
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
+    cache_root = Path(HF_LEROBOT_HOME).resolve()
+    root = (cache_root / repo_id).resolve()
+    if root == cache_root or cache_root not in root.parents:
+        raise ValueError(f"Invalid dataset id: {repo_id}")
+    return root
 
 
 def _platform_backend():
@@ -177,6 +194,10 @@ def create_record_config(request: RecordingRequest) -> RecordConfig:
     # Create dataset config
     dataset_config = DatasetRecordConfig(
         repo_id=request.dataset_repo_id,
+        # LeRobotDataset.resume() deliberately rejects root=None because its
+        # fallback is a read-only Hub snapshot cache. Point it at the local
+        # recording directory when appending episodes.
+        root=_local_dataset_root(request.dataset_repo_id) if request.resume else None,
         single_task=request.single_task,
         num_episodes=request.num_episodes,
         episode_time_s=request.episode_time_s,
@@ -243,10 +264,24 @@ def handle_start_recording(request: RecordingRequest) -> dict[str, Any]:
         last_recording_info = None
 
     try:
-        # Sanitize the dataset name so push_to_hub never rejects a finished
-        # recording over an invalid character. HF repo names allow only
-        # [A-Za-z0-9._-]; everything else becomes "_".
-        if request.dataset_repo_id:
+        if request.resume:
+            try:
+                dataset_root = _local_dataset_root(request.dataset_repo_id)
+            except ValueError as e:
+                raise ValueError(str(e)) from e
+
+            if not (dataset_root / "meta" / "info.json").is_file():
+                raise FileNotFoundError(
+                    f"Dataset {request.dataset_repo_id} is not available locally and cannot be resumed"
+                )
+
+            # An interrupted prior session may have complete episode shards but
+            # no readable episode index. Repair it before opening a writer.
+            repair_local_dataset(request.dataset_repo_id)
+        # Sanitize new dataset names so push_to_hub never rejects a finished
+        # recording over an invalid character. A resume must preserve the exact
+        # existing repo id instead.
+        elif request.dataset_repo_id:
             if "/" in request.dataset_repo_id:
                 namespace, name = request.dataset_repo_id.split("/", 1)
                 name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
@@ -551,11 +586,13 @@ def handle_get_dataset_info(request: DatasetInfoRequest) -> dict[str, Any]:
         repair_local_dataset(request.dataset_repo_id)
 
         dataset = LeRobotDataset(request.dataset_repo_id)
+        tasks = list(dataset.meta.tasks.index) if dataset.meta.tasks is not None else []
         return {
             "success": True,
             "dataset_repo_id": request.dataset_repo_id,
             "num_episodes": dataset.num_episodes,
-            "single_task": getattr(dataset.meta, "single_task", "Unknown task"),
+            "single_task": tasks[0] if tasks else "",
+            "tasks": tasks,
             "fps": dataset.fps,
             "features": list(dataset.features.keys()),
             "total_frames": dataset.num_frames,
